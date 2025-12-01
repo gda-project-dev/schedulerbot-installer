@@ -1,135 +1,130 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-###########################################################
-# SchedulerBot Production Installer v1
-# 使用方式（Ubuntu 伺服器）：
-#
-#   chmod +x install_production.sh
-#   ./install_production.sh schedulerbot.com admin@example.com
-#
-# 若省略參數，預設：
-#   DOMAIN = schedulerbot.com
-#   EMAIL  = admin@example.com
-###########################################################
+echo ""
+echo "==============================="
+echo "🚀 SchedulerBot Installer"
+echo "==============================="
+echo ""
 
-DOMAIN="${1:-schedulerbot.com}"
-EMAIL="${2:-admin@example.com}"
+IMAGE="ghcr.io/gda-project-dev/schedulerbot"
+CONTAINER_NAME="${CONTAINER_NAME:-schedulerbot}"
 
-echo "🚀 SchedulerBot Production Installer v1"
-echo "--------------------------------------"
-echo "Domain : ${DOMAIN}"
-echo "Email  : ${EMAIL}"
-echo
+# 預設版本，可用 --version 覆蓋
+VERSION="${SCHEDULERBOT_VERSION:-1.0.0}"
 
-# 需要 root 或有 sudo 權限
-if [ "$EUID" -ne 0 ]; then
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "❌ 請用 root 或安裝 sudo 再執行此腳本。"
-    exit 1
-  fi
-fi
+# GHCR token（private image 時用）
+TOKEN="${GHCR_TOKEN:-}"
 
-run_cmd() {
-  if [ "$EUID" -ne 0 ]; then
-    sudo bash -c "$1"
-  else
-    bash -c "$1"
-  fi
-}
+# 對外 port & DB 路徑
+HOST_PORT="${HOST_PORT:-3067}"
+DB_DIR="${DB_DIR:-/opt/schedulerbot/db}"
 
-###########################################################
-# 1. 安裝 Docker
-###########################################################
+# ---------- 解析參數 ----------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version|-v)
+      VERSION="$2"
+      shift 2
+      ;;
+    --token)
+      TOKEN="$2"
+      shift 2
+      ;;
+    --port)
+      HOST_PORT="$2"
+      shift 2
+      ;;
+    --db-dir)
+      DB_DIR="$2"
+      shift 2
+      ;;
+    --help|-h)
+      cat <<EOF
+用法：
+
+  # 最簡單（public image）
+  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot-installer/main/install_production.sh \\
+    | sudo bash -s -- --version 1.0.0
+
+  # 如果 image 是 private，需要 token：
+  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot-installer/main/install_production.sh \\
+    | sudo bash -s -- --version 1.0.0 --token YOUR_GHCR_PAT
+
+可選參數：
+  --version / -v   指定要安裝的 image 版本（預設 1.0.0）
+  --token          GHCR PAT，用於 private image 登入
+  --port           對外埠號（預設 3067）
+  --db-dir         DB 目錄（預設 /opt/schedulerbot/db）
+EOF
+      exit 0
+      ;;
+    *)
+      echo "❌ 未知參數：$1"
+      exit 1
+      ;;
+  esac
+done
+
+FULL_IMAGE="$IMAGE:$VERSION"
+
+echo "📌 Version:         $VERSION"
+echo "📌 Container Name:  $CONTAINER_NAME"
+echo "📌 Port:            $HOST_PORT"
+echo "📌 DB Path:         $DB_DIR"
+echo ""
+
+# ---------- 安裝 Docker（如果還沒裝） ----------
 if ! command -v docker >/dev/null 2>&1; then
   echo "🐳 未找到 docker，開始安裝..."
-  run_cmd "apt-get update"
-  run_cmd "apt-get install -y ca-certificates curl gnupg lsb-release"
-
-  run_cmd "mkdir -p /etc/apt/keyrings"
-  run_cmd "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
-  run_cmd "echo \
-    \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
-
-  run_cmd "apt-get update"
-  run_cmd "apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y
+    apt-get install -y docker.io
+    systemctl enable docker --now || true
+  else
+    echo "❌ 找不到 apt-get，請先手動安裝 Docker 後再執行本腳本。"
+    exit 1
+  fi
 else
-  echo "🐳 Docker 已安裝，略過。"
+  echo "✔ Docker 已安裝。"
 fi
 
-###########################################################
-# 2. 確認 docker compose 可用
-###########################################################
-if docker compose version >/dev/null 2>&1; then
-  echo "📦 docker compose 已可使用。"
+# ---------- GHCR 登入（如有提供 token） ----------
+if [[ -n "$TOKEN" ]]; then
+  echo "🔐 使用 GHCR token 登入 ghcr.io..."
+  echo "$TOKEN" | docker login ghcr.io -u gda-project-dev --password-stdin
 else
-  echo "📦 安裝 docker compose plugin..."
-  run_cmd "apt-get update"
-  run_cmd "apt-get install -y docker-compose-plugin"
+  echo "ℹ️ 未提供 --token，假設 image 為 public 或已事先登入 ghcr.io。"
 fi
 
-###########################################################
-# 3. 寫入 .env (SB_DOMAIN / SB_EMAIL)
-###########################################################
-echo "📝 建立 .env 檔案（SB_DOMAIN / SB_EMAIL）..."
-
-cat > .env <<EOF
-SB_DOMAIN=${DOMAIN}
-SB_EMAIL=${EMAIL}
-EOF
-
-echo ".env 內容："
-cat .env
-echo
-
-###########################################################
-# 4. 建立必要目錄（db / caddy 資料）
-###########################################################
-mkdir -p social-scheduler-api/db
-mkdir -p caddy_data
-mkdir -p caddy_config
-
-###########################################################
-# 5. 使用 docker compose 啟動
-###########################################################
-echo "🚀 透過 docker compose 建立 / 啟動容器..."
-
-# 先確保舊容器關閉（如果有）
-if docker ps -a --format '{{.Names}}' | grep -q '^schedulerbot$'; then
-  echo "   偵測到舊的 schedulerbot 容器，先停用並刪除..."
-  docker compose down || true
+# ---------- 準備 DB 目錄 ----------
+if [[ ! -d "$DB_DIR" ]]; then
+  echo "📁 建立 DB 目錄：$DB_DIR"
+  mkdir -p "$DB_DIR"
 fi
 
-# build + up
-docker compose build
-docker compose up -d
+# ---------- 拉 image ----------
+echo "📦 拉取 image：$FULL_IMAGE"
+docker pull "$FULL_IMAGE"
 
-echo
-echo "✅ SchedulerBot 容器已啟動。"
-echo
+# ---------- 停舊容器 ----------
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}\$"; then
+  echo "🛑 停止舊容器 ${CONTAINER_NAME}..."
+  docker stop "$CONTAINER_NAME" || true
+  echo "🧹 移除舊容器 ${CONTAINER_NAME}..."
+  docker rm "$CONTAINER_NAME" || true
+fi
 
-###########################################################
-# 6. 顯示狀態 & 提示
-###########################################################
-echo "📦 目前容器狀態："
-docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | sed 's/^/  /'
-echo
+# ---------- 跑新容器 ----------
+echo "🐳 啟動 SchedulerBot 容器..."
+docker run -d \
+  --name "$CONTAINER_NAME" \
+  -p "${HOST_PORT}:3067" \
+  -v "${DB_DIR}:/app/social-scheduler-api/db" \
+  --restart unless-stopped \
+  "$FULL_IMAGE"
 
-IP=$(curl -s https://ipinfo.io/ip || echo "YOUR_SERVER_IP")
-
+echo ""
 echo "🎉 安裝完成！"
-echo
-echo "請確認你的 DNS 已將："
-echo "  ${DOMAIN}  → 指向此伺服器 IP (${IP})"
-echo
-echo "幾分鐘後，打開瀏覽器："
-echo "  https://${DOMAIN}"
-echo
-echo "第一次開啟時 Caddy 會自動申請 HTTPS 憑證，"
-echo "若畫面顯示 SchedulerBot UI（Setup Admin / Login），就代表成功 🎯"
-echo
-echo "若要查看日誌，可執行："
-echo "  docker logs -f schedulerbot"
-echo "  docker logs -f schedulerbot-caddy"
-echo
+echo "➡ 請在瀏覽器打開：http://$(hostname -I | awk '{print $1}'):${HOST_PORT}"
+echo ""
