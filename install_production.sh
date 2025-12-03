@@ -167,7 +167,6 @@ docker run -d \
   -p "${HOST_PORT}:3067" \
   -e TZ=Asia/Taipei \
   -e SERVER_URL="${SERVER_URL}" \
-  -v "${DB_DIR}:/app/social-scheduler-api/db" \
   --restart unless-stopped \
   "$FULL_IMAGE"
 
