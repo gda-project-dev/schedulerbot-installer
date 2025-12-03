@@ -11,7 +11,7 @@ IMAGE="ghcr.io/gda-project-dev/schedulerbot"
 CONTAINER_NAME="${CONTAINER_NAME:-schedulerbot}"
 
 # 預設版本，可用 --version 覆蓋（⚠️ 記得改成你實際最新版本）
-VERSION="${SCHEDULERBOT_VERSION:-1.2.9}"
+VERSION="${SCHEDULERBOT_VERSION:-1.2.6}"
 
 # GHCR token（private image 時用）
 TOKEN="${GHCR_TOKEN:-}"
@@ -50,20 +50,20 @@ while [[ $# -gt 0 ]]; do
       cat <<EOF
 用法：
 
-  # 最簡單（public image 或已經登入 ghcr.io）
-  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot/main/install_production.sh \\
-    | sudo bash -s -- --version ${VERSION}
+  # 最簡單（public image）
+  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot-installer/main/install_production.sh \\
+    | sudo bash -s -- --version 1.2.2
 
   # 如果 image 是 private，需要 token：
-  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot/main/install_production.sh \\
-    | sudo bash -s -- --version ${VERSION} --token YOUR_GHCR_PAT
+  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot-installer/main/install_production.sh \\
+    | sudo bash -s -- --version 1.2.2 --token YOUR_GHCR_PAT
 
   # 如果這台機器之前跑過其他 Docker 專案，想全部清掉再裝：
-  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot/main/install_production.sh \\
-    | sudo bash -s -- --version ${VERSION} --cleanup-all
+  curl -s https://raw.githubusercontent.com/gda-project-dev/schedulerbot-installer/main/install_production.sh \\
+    | sudo bash -s -- --version 1.2.2 --cleanup-all
 
 可選參數：
-  --version / -v   指定要安裝的 image 版本（預設 ${VERSION}）
+  --version / -v   指定要安裝的 image 版本（預設 1.2.2）
   --token          GHCR PAT，用於 private image 登入
   --port           對外埠號（預設 3067）
   --db-dir         DB 目錄（預設 /opt/schedulerbot/db）
@@ -109,19 +109,23 @@ if [[ "$CLEAN_ALL" == true ]]; then
   echo "   如果這台機器上有其他專案在用 Docker，請不要加 --cleanup-all。"
   echo ""
 
+  # 停止所有正在跑的容器
   if [ -n "$(docker ps -q)" ]; then
     echo "🛑 停止所有容器..."
     docker stop $(docker ps -q) || true
   fi
 
+  # 移除所有容器
   if [ -n "$(docker ps -aq)" ]; then
     echo "🧹 移除所有容器..."
     docker rm $(docker ps -aq) || true
   fi
 
+  # 清除不用的 image / network
   echo "🧼 docker system prune -a ..."
   docker system prune -af || true
 
+  # 清除不用的 volume
   echo "🧽 docker volume prune ..."
   docker volume prune -f || true
 
@@ -167,7 +171,6 @@ docker run -d \
   -p "${HOST_PORT}:3067" \
   -e TZ=Asia/Taipei \
   -e SERVER_URL="${SERVER_URL}" \
-  -v "${DB_DIR}:/app/social-scheduler-api/db" \
   --restart unless-stopped \
   "$FULL_IMAGE"
 
