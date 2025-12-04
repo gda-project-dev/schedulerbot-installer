@@ -3,19 +3,11 @@ set -euo pipefail
 
 # =========================
 # SchedulerBot 更新腳本
-# 使用方式：
-#   bash update.sh --version 1.1.0 [--token YOUR_PAT]
-#
-# 也可以用環境變數：
-#   export SCHEDULERBOT_VERSION=1.1.0
-#   export GHCR_TOKEN=ghp_xxx...
-#   bash update.sh
 # =========================
 
 IMAGE_BASE="ghcr.io/gda-project-dev/schedulerbot"
 CONTAINER_NAME="${CONTAINER_NAME:-schedulerbot}"
 
-# 可以用環境變數覆蓋
 HOST_PORT="${HOST_PORT:-3067}"
 DB_DIR="${DB_DIR:-/opt/schedulerbot/db}"
 EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:-}"
@@ -40,17 +32,6 @@ SchedulerBot 更新腳本
 
 用法：
   bash update.sh --version 1.1.0 [--token YOUR_GHCR_PAT]
-
-或使用環境變數：
-  export SCHEDULERBOT_VERSION=1.1.0
-  export GHCR_TOKEN=ghp_xxx...
-  bash update.sh
-
-可覆蓋的環境變數：
-  CONTAINER_NAME  (預設: schedulerbot)
-  HOST_PORT       (預設: 3067)
-  DB_DIR          (預設: /opt/schedulerbot/db)
-  EXTRA_DOCKER_ARGS (附加到 docker run 後面)
 EOF
       exit 0
       ;;
@@ -63,8 +44,7 @@ EOF
 done
 
 if [[ -z "$VERSION" ]]; then
-  echo "❌ 必須指定版本號，例如："
-  echo "   bash update.sh --version 1.0.1"
+  echo "❌ 必須指定版本號，例如： bash update.sh --version 1.0.1"
   exit 1
 fi
 
@@ -86,7 +66,7 @@ else
   echo "ℹ️ 未提供 GHCR_TOKEN / --token，假設已經登錄過 ghcr.io。"
 fi
 
-# ----- 確保 DB 目錄存在 -----
+# ----- 確保 DB 目錄存在（目前只用來放 sqlite 檔備份，不再掛 volume）-----
 if [[ ! -d "$DB_DIR" ]]; then
   echo "📁 建立 DB 目錄: $DB_DIR"
   mkdir -p "$DB_DIR"
@@ -112,7 +92,6 @@ echo "🐳 啟動新版本容器..."
 docker run -d \
   --name "$CONTAINER_NAME" \
   -p ${HOST_PORT}:3067 \
-  -v "${DB_DIR}:/app/social-scheduler-api/db" \
   --restart unless-stopped \
   $EXTRA_DOCKER_ARGS \
   "$IMAGE_TAG"
